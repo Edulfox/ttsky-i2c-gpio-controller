@@ -32,7 +32,7 @@ not reset the scratchpad memory. Every scratchpad test writes before reading.
 
 import cocotb
 from cocotb.clock import Clock
-from cocotb.triggers import ClockCycles, Timer
+from cocotb.triggers import ClockCycles, Timer, RisingEdge
 
 
 # -----------------------------------------------------------------------------
@@ -1104,9 +1104,20 @@ async def test_16_asynchronous_reset_during_active_i2c(dut):
     assert bit(signal_int(dut.uio_oe), 3) == 1, "Target did not enter ACK drive state"
     assert bit(signal_int(dut.uio_out), 3) == 0
 
-    # Asynchronous active-low reset must immediately release SDA and reset outputs.
-    dut.rst_n.value = 0
+    # Align the reset assertion just after a project-clock rising edge.
+    # This gives almost one full 20 ns clock period before the next rising edge.
+    # The gate-level netlist contains real reset-tree and cell propagation delays,
+    # so checking only 1 ns after rst_n falls is unrealistically strict.
+    await RisingEdge(dut.clk)
     await Timer(1, unit="ns")
+
+    # Assert reset while I2C is still held in the ACK phase.
+    dut.rst_n.value = 0
+
+    # Verify asynchronous behavior BEFORE the next project-clock rising edge.
+    # 15 ns is comfortably longer than the implemented reset-tree propagation
+    # while remaining below the 19 ns available until the next rising edge.
+    await Timer(15, unit="ns")
 
     assert signal_int(dut.uo_out) == 0x00
     assert signal_int(dut.uio_oe) == 0x00
